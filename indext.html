@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>McShane Daily Setup Report → Excel</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="card">
+    <h1>McShane Daily Setup Report → Excel</h1>
+    <p class="subtitle">
+      Drop today's 25Live Daily Setup Report PDF below. Everything happens in
+      your browser — the file is never uploaded anywhere — and a formatted
+      Excel sheet downloads automatically, filtered to JMCC, KE 1st/3rd,
+      Bepler, and Campbell.
+    </p>
+
+    <div id="dropzone" class="dropzone">
+      <input type="file" id="fileInput" accept="application/pdf" hidden />
+      <div class="dropzone-content">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M12 16V4M12 4l-4 4M12 4l4 4" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M4 16v3a2 2 0 002 2h12a2 2 0 002-2v-3" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <p><strong>Drag &amp; drop</strong> the PDF here, or click to choose a file</p>
+      </div>
+    </div>
+
+    <div id="status" class="status" aria-live="polite"></div>
+
+    <details class="notes">
+      <summary>What this does / assumptions</summary>
+      <ul>
+        <li>Keeps only events located at JMCC (any room), KE 1st &amp; 3rd floors, Bepler, and Campbell.</li>
+        <li><strong>Setup Time</strong> uses the report's "Setup Starts" time; if none is given, it falls back to the "Setup Ready By" time and says so in the cell.</li>
+        <li><strong>Take Down Time</strong> is the event's end time (the report has no separate teardown field).</li>
+        <li>Events split across a page break in the PDF (same reference number twice) are merged into one row.</li>
+        <li>"Setup Initials" and "Take Down Initials" are left blank for whoever does each job to fill in.</li>
+      </ul>
+    </details>
+  </main>
+
+  <!-- pdf.js: reads text + position data out of the PDF, entirely client-side -->
+  <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+  <!-- xlsx-js-style: SheetJS fork that can write styled .xlsx files -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style/dist/xlsx.bundle.js"></script>
+  <script>
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
+  </script>
+  <script src="app.js"></script>
+  <script src="ui.js"></script>
+</body>
+</html>
