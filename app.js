@@ -23,6 +23,45 @@ const COL_E = [495, 700];     // Requestor / Scheduler / Organization
 const TARGET_BUILDINGS = ["JMCC", "BEPLER", "CAMPBELL"]; // substring matches
 const KE_FLOORS_ALLOWED = ["1ST", "3RD"];                 // only these KE floors
 
+// Minutes before the event starts / after it ends that the room needs to be
+// opened / can be torn down. Change these two numbers if the policy changes.
+const SETUP_LEAD_MINUTES = 30;
+const TAKEDOWN_LAG_MINUTES = 30;
+
+// Fixed column widths (Excel "characters" unit) and which columns wrap their
+// text instead of just getting wider. Resources Needed and Event can get
+// long, so they wrap and the row height is calculated to fit.
+const COLUMN_WIDTHS = {
+  Date: 20,
+  "Building / Room": 24,
+  Event: 32,
+  "Setup Initials": 14,
+  "Setup Time": 16,
+  "Resources Needed": 60,
+  "Take Down Time": 16,
+  "Take Down Initials": 14,
+};
+const WRAP_COLUMNS = new Set(["Event", "Resources Needed"]);
+
+function parseTimeToMinutes(s) {
+  if (!s) return null;
+  const m = s.trim().match(/^(\d{1,2}):(\d{2})\s*([AP]M)$/i);
+  if (!m) return null;
+  let hour = parseInt(m[1], 10) % 12;
+  const minute = parseInt(m[2], 10);
+  if (m[3].toUpperCase() === "PM") hour += 12;
+  return hour * 60 + minute;
+}
+
+function formatMinutesToTime(totalMinutes) {
+  const mins = ((totalMinutes % 1440) + 1440) % 1440; // wrap around midnight
+  const hour24 = Math.floor(mins / 60);
+  const minute = mins % 60;
+  const period = hour24 >= 12 ? "PM" : "AM";
+  const hour12 = hour24 % 12 === 0 ? 12 : hour24 % 12;
+  return `${hour12}:${String(minute).padStart(2, "0")} ${period}`;
+}
+
 function whichCol(x) {
   if (x >= COL_READY[0] && x < COL_READY[1]) return "A";
   if (x >= COL_B[0] && x < COL_B[1]) return "B";
@@ -198,28 +237,37 @@ function buildRows(reportDate, events) {
     const kept = uniqueLocations.filter(isBuildingKept);
     if (!kept.length) continue;
 
-    let setupTime;
-    if (ev.setupStarts && ev.setupStarts !== "no setup time defined") {
-      setupTime = ev.setupStarts;
-    } else {
-      setupTime = `${ev.readyBy} (ready-by; no explicit setup lead time given)`;
-    }
+    // Setup/take-down times are always 30 min before the event starts and
+    // 30 min after it ends - we ignore 25Live's own "Setup Starts" field
+    // since it's frequently blank ("no setup time defined") or just repeats
+    // the event's start time, so it isn't a reliable lead time.
+    const startMin = parseTimeToMinutes(ev.eventStart);
+    const endMin = parseTimeToMinutes(ev.eventEnd);
+    const setupTime = startMin != null ? formatMinutesToTime(startMin - SETUP_LEAD_MINUTES) : "Unknown";
+    const takedownTime = endMin != null ? formatMinutesToTime(endMin + TAKEDOWN_LAG_MINUTES) : "Unknown";
 
     const resources =
       ev.resources
         .map(([q, name, instr]) => `${q}x ${name}${instr ? ` (${instr})` : ""}`)
         .join("; ") || "None";
 
-    out.push({
-      Date: reportDate,
-      "Building / Room": kept.join("; "),
-      Event: ev.title,
-      "Setup Initials": "",
-      "Setup Time": setupTime,
-      "Resources Needed": resources,
-      "Take Down Time (Event End)": ev.eventEnd,
-      "Take Down Initials": "",
-    });
+    // One row per room, not one row with every room crammed into a single
+    // cell - lets whoever's covering that specific room initial it
+    // independently. Note: if an event uses several rooms, the same
+    // combined resource list is shown on each room's row since the report
+    // doesn't say which resource belongs to which specific room.
+    for (const loc of kept) {
+      out.push({
+        Date: reportDate,
+        "Building / Room": loc,
+        Event: ev.title,
+        "Setup Initials": "",
+        "Setup Time": setupTime,
+        "Resources Needed": resources,
+        "Take Down Time": takedownTime,
+        "Take Down Initials": "",
+      });
+    }
   }
   return out;
 }
@@ -232,7 +280,7 @@ function rowsToWorkbook(rows) {
     "Setup Initials",
     "Setup Time",
     "Resources Needed",
-    "Take Down Time (Event End)",
+    "Take Down Time",
     "Take Down Initials",
   ];
   const aoa = [headers, ...rows.map((r) => headers.map((h) => r[h] ?? ""))];
@@ -248,10 +296,28 @@ function rowsToWorkbook(rows) {
     if (ws[cellRef]) ws[cellRef].s = headerStyle;
   });
 
-  ws["!cols"] = headers.map((h, i) => {
-    const maxLen = Math.max(h.length, ...rows.map((r) => String(r[h] ?? "").length));
-    return { wch: Math.min(maxLen + 2, 70) };
+  const wrapStyle = { alignment: { wrapText: true, vertical: "top" } };
+  const rowHeights = rows.map((row) => {
+    let linesNeeded = 1;
+    headers.forEach((h, cIdx) => {
+      if (!WRAP_COLUMNS.has(h)) return;
+      const width = COLUMN_WIDTHS[h] || 20;
+      const text = String(row[h] ?? "");
+      linesNeeded = Math.max(linesNeeded, Math.ceil(text.length / width));
+    });
+    return linesNeeded;
   });
+
+  rows.forEach((row, rIdx) => {
+    headers.forEach((h, cIdx) => {
+      if (!WRAP_COLUMNS.has(h)) return;
+      const cellRef = XLSX.utils.encode_cell({ r: rIdx + 1, c: cIdx });
+      if (ws[cellRef]) ws[cellRef].s = wrapStyle;
+    });
+  });
+
+  ws["!cols"] = headers.map((h) => ({ wch: COLUMN_WIDTHS[h] || 20 }));
+  ws["!rows"] = [{ hpt: 20 }, ...rowHeights.map((lines) => ({ hpt: Math.max(15, lines * 15) }))];
   ws["!freeze"] = { xSplit: 0, ySplit: 1 };
   ws["!autofilter"] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: 0, c: headers.length - 1 } }) };
 
